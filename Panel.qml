@@ -109,7 +109,10 @@ Panel {
     owner: root.barIdentity
     bar: root.bar
     open: root.opened
-    centerOnBar: true
+    // Anchored under the widget rather than centered on the bar: the panel
+    // belongs to the reading you clicked, and a right-hand widget opening a
+    // panel in the middle of the screen reads as someone else's popup.
+    centerOnBar: false
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(root.panelWidth)
     contentHeight: panel.fittedContentHeight(column.implicitHeight)
