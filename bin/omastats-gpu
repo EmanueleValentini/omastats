@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Stream GPU samples, one CSV line per interval, until killed. The shell
+# starts this only while something is actually showing GPU numbers.
+#
+# Line format (matches nvidia-smi's own, so both backends parse identically):
+#   name, utilization%, temperature C, memory used MiB, memory total MiB,
+#   power W, graphics clock MHz, fan %
+# Unavailable fields are printed as [N/A].
+
+set -uo pipefail
+
+interval=${1:-2}
+case "$interval" in
+  ''|*[!0-9]*) interval=2 ;;
+esac
+[ "$interval" -lt 1 ] && interval=1
+
+query=name,utilization.gpu,temperature.gpu,memory.used,memory.total,power.draw,clocks.gr,fan.speed
+
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+  # nvidia-smi's own loop: one process for the whole session rather than a
+  # fork per sample.
+  exec nvidia-smi --query-gpu="$query" --format=csv,noheader,nounits -l "$interval"
+fi
+
+# amdgpu exposes the same numbers through sysfs.
+amd_card=""
+for card in /sys/class/drm/card*/device; do
+  [ -r "$card/gpu_busy_percent" ] || continue
+  amd_card=$card
+  break
+done
+
+[ -n "$amd_card" ] || exit 0
+
+read_first() {
+  local value
+  value=$(cat "$1" 2>/dev/null) || return 1
+  printf '%s' "$value"
+}
+
+amd_hwmon=""
+for hwmon in "$amd_card"/hwmon/hwmon*; do
+  [ -d "$hwmon" ] || continue
+  amd_hwmon=$hwmon
+  break
+done
+
+name="AMD GPU"
+if command -v lspci >/dev/null 2>&1; then
+  pci_id=$(basename "$(readlink -f "$amd_card")")
+  detected=$(lspci -s "${pci_id#0000:}" 2>/dev/null | sed 's/^[^ ]* //; s/^[^:]*: //')
+  [ -n "$detected" ] && name=$detected
+fi
+
+scaled() {
+  # $1 raw value, $2 divisor — prints [N/A] when the file is missing.
+  local raw=$1 divisor=$2
+  [ -n "$raw" ] || { printf '[N/A]'; return; }
+  awk -v v="$raw" -v d="$divisor" 'BEGIN { printf "%.0f", v / d }'
+}
+
+while true; do
+  util=$(read_first "$amd_card/gpu_busy_percent" || printf '')
+  vram_used=$(read_first "$amd_card/mem_info_vram_used" || printf '')
+  vram_total=$(read_first "$amd_card/mem_info_vram_total" || printf '')
+  temp=""; power=""; clock=""; fan=""
+  if [ -n "$amd_hwmon" ]; then
+    temp=$(read_first "$amd_hwmon/temp1_input" || printf '')
+    power=$(read_first "$amd_hwmon/power1_average" || printf '')
+    clock=$(read_first "$amd_hwmon/freq1_input" || printf '')
+    fan=$(read_first "$amd_hwmon/pwm1" || printf '')
+  fi
+
+  printf '%s, %s, %s, %s, %s, %s, %s, %s\n' \
+    "$name" \
+    "${util:-[N/A]}" \
+    "$(scaled "$temp" 1000)" \
+    "$(scaled "$vram_used" 1048576)" \
+    "$(scaled "$vram_total" 1048576)" \
+    "$(scaled "$power" 1000000)" \
+    "$(scaled "$clock" 1000000)" \
+    "$([ -n "$fan" ] && awk -v v="$fan" 'BEGIN { printf "%.0f", v * 100 / 255 }' || printf '[N/A]')"
+
+  sleep "$interval"
+done

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.emanuelevalentini.omastats",
+  "name": "Omastats",
+  "version": "0.1.0",
+  "author": "Emanuele Valentini",
+  "license": "MIT",
+  "description": "Live CPU, memory, temperature, GPU, disk and network stats in the bar, with a full system panel on click",
+  "kinds": [
+    "bar-widget",
+    "service"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml",
+    "service": "Service.qml"
+  },
+  "barWidget": {
+    "displayName": "System stats",
+    "description": "Live CPU, memory and network readings with a full system panel",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

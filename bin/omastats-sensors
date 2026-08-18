@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Enumerate the machine's temperature sensors once, as JSON, for the shell
+# plugin to open FileViews on. Discovery needs a directory walk and QML has
+# no way to do one, but it only has to happen at startup — the per-tick reads
+# are plain file reads from inside the shell process.
+#
+# Output: [{"path":…,"chip":…,"label":…}, …] sorted by chip then label.
+
+set -uo pipefail
+
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+first=1
+emit() {
+  local path=$1 chip=$2 label=$3
+  [ $first -eq 1 ] || printf ','
+  first=0
+  printf '{"path":"%s","chip":"%s","label":"%s"}' \
+    "$(json_escape "$path")" "$(json_escape "$chip")" "$(json_escape "$label")"
+}
+
+printf '['
+
+found=0
+for chip_dir in /sys/class/hwmon/hwmon*; do
+  [ -r "$chip_dir/name" ] || continue
+  chip=$(cat "$chip_dir/name" 2>/dev/null) || continue
+
+  for input in "$chip_dir"/temp*_input; do
+    [ -r "$input" ] || continue
+
+    label_file="${input%_input}_label"
+    if [ -r "$label_file" ]; then
+      label=$(cat "$label_file" 2>/dev/null)
+    else
+      # temp1_input -> temp1, so an unlabelled sensor still says which one
+      # of the chip's sensors it is.
+      label=$(basename "${input%_input}")
+    fi
+
+    emit "$input" "$chip" "$label"
+    found=1
+  done
+done
+
+# Machines with no hwmon temperatures at all (some VMs, some ARM boards)
+# still expose the ACPI thermal zones.
+if [ $found -eq 0 ]; then
+  for zone in /sys/class/thermal/thermal_zone*; do
+    [ -r "$zone/temp" ] || continue
+    type=$(cat "$zone/type" 2>/dev/null || echo thermal)
+    emit "$zone/temp" "$type" "$(basename "$zone")"
+  done
+fi
+
+printf ']\n'
