@@ -4,6 +4,7 @@
 // than silently in the bar.
 import { createRequire } from "node:module"
 import { readFileSync } from "node:fs"
+import { runInNewContext } from "node:vm"
 
 const require = createRequire(import.meta.url)
 const M = require("../Model.js")
@@ -115,6 +116,68 @@ eq("nvidia: MiB to bytes", gpu.memoryUsed, 512 * 1024 * 1024)
 near("nvidia: memory percent", gpu.memoryPercent, 6.2537, 0.001)
 check("nvidia: N/A stays NaN", Number.isNaN(M.parseNvidiaLine("GPU, 1, 2, 3, 4, [N/A], 5, 6").power))
 eq("nvidia: short line rejected", M.parseNvidiaLine("junk"), null)
+
+// ---- Intel iGPU: independent samples from the streaming JSON array
+const intelSample = {
+  engines: {
+    "Render/3D/0": { busy: 12.5 },
+    "Video/0": { busy: 48.25 },
+    "Blitter/0": { busy: 7 }
+  }
+}
+near("intel: video work counts, overlapping engines are not summed", M.parseIntelGpuSample(intelSample).utilization, 48.25)
+eq("intel: idle is a valid sample", M.parseIntelGpuSample({ engines: { Render: { busy: 0 } } }).utilization, 0)
+eq("intel: clamp percent", M.parseIntelGpuSample({ engines: { Render: { busy: 101 } } }).utilization, 100)
+eq("intel: missing engines is not idle", M.parseIntelGpuSample({}), null)
+eq("intel: empty engines is not idle", M.parseIntelGpuSample({ engines: {} }), null)
+eq("intel: invalid values are not idle", M.parseIntelGpuSample({ engines: { Render: { busy: null }, Video: { busy: "N/A" }, Copy: { busy: NaN } } }), null)
+eq("intel: null engine ignored", M.parseIntelGpuSample({ engines: { Render: null } }), null)
+
+const intelStream = '[\n' + JSON.stringify(intelSample, null, 2) + ',\n' + JSON.stringify({ engines: { Render: { busy: 0 } }, client: 'name {with} "quotes" and \\ escapes' })
+let jsonBuffer = ""
+const intelObjects = []
+// Exercise arbitrary split boundaries, including strings and nested objects.
+for (const ch of intelStream) {
+  const decoded = M.readJsonObjects(jsonBuffer + ch)
+  intelObjects.push(...decoded.objects)
+  jsonBuffer = decoded.remainder
+}
+eq("intel: samples arrive before the stream closes", intelObjects.length, 2)
+near("intel: first streamed utilization", M.parseIntelGpuSample(intelObjects[0]).utilization, 48.25)
+eq("intel: second streamed utilization", M.parseIntelGpuSample(intelObjects[1]).utilization, 0)
+eq("intel: no consumed data retained", jsonBuffer, "")
+eq("intel: multiline sample not yet complete", M.readJsonObjects('[\n{\n"engines": {}}'.slice(0, -1)).objects.length, 0)
+eq("intel: malformed sample skipped, next sample survives", M.readJsonObjects('{"busy":nan},' + JSON.stringify(intelSample)).objects.length, 1)
+eq("intel: unterminated data bounded", M.readJsonObjects('{"bad":"' + "x".repeat(1048576)).remainder, "")
+eq("intel: missing-tool message parsed", M.readJsonObjects('{"error":"Install intel-gpu-tools"}\n').objects[0].error, "Install intel-gpu-tools")
+
+// Run the actual QML sampler methods with their properties supplied by a VM.
+// A hybrid machine must keep its discrete and integrated histories separate.
+const statsSource = readFileSync(new URL("../Stats.qml", import.meta.url), "utf8")
+const stats = {
+  Model: M, gpu: null, gpuHistory: [], igpuDetected: false,
+  igpuPercent: NaN, igpuHistory: [], igpuError: "", igpuBuffer: "", historyLength: 2
+}
+const gpuMethods = ["applyGpuLine", "applyIgpuLine"].map(name => {
+  const method = statsSource.match(new RegExp("  function " + name + "\\([^]*?\\n  \\}"))
+  if (!method) throw new Error("Missing sampler method: " + name)
+  return method[0]
+}).join("\n")
+runInNewContext(gpuMethods, stats)
+stats.applyGpuLine("NVIDIA GPU, 80, 45, 512, 8188, 23, 210, 30")
+stats.applyIgpuLine('{"detected":true}')
+for (const busy of [10, 25, 40]) {
+  for (const line of JSON.stringify({ engines: { Video: { busy } } }, null, 2).split("\n")) stats.applyIgpuLine(line)
+}
+eq("sampler: iGPU detected", stats.igpuDetected, true)
+eq("sampler: iGPU current load", stats.igpuPercent, 40)
+eq("sampler: bounded iGPU history", stats.igpuHistory.join(","), "25,40")
+eq("sampler: discrete GPU load preserved", stats.gpu.utilization, 80)
+eq("sampler: discrete GPU history preserved", stats.gpuHistory.join(","), "80")
+stats.applyIgpuLine('{"engines":{}}')
+eq("sampler: missing reading does not append zero", stats.igpuHistory.join(","), "25,40")
+stats.applyIgpuLine('{"error":"Install intel-gpu-tools"}')
+eq("sampler: actionable helper error", stats.igpuError, "Install intel-gpu-tools")
 
 // ---- df / ps
 const df = M.parseDf(`Filesystem     Mounted on     1B-blocks         Used        Avail Use%

@@ -8,11 +8,12 @@ import "Model.js" as Model
 // and nowhere else.
 //
 // Reads come straight from /proc and /sys through FileView, inside the
-// shell process — no subprocess per tick. The three things the kernel does
+// shell process — no subprocess per tick. The things the kernel does
 // not hand over as a plain readable file get a helper:
 //
 //   bin/omastats-sensors  one shot at startup, to find the hwmon files
 //   bin/omastats-gpu      long-lived, only while a GPU number is on screen
+//   bin/omastats-igpu     Intel iGPU, only while the panel is open
 //   df / ps               only while the panel is open
 //
 // Consumers announce what they need with retain()/release() so a closed
@@ -84,6 +85,11 @@ Item {
 
   // ---- GPU
   property var gpu: null
+  property bool igpuDetected: false
+  property bool igpuAvailable: true
+  property real igpuPercent: NaN
+  property string igpuError: ""
+  property string igpuBuffer: ""
 
   // ---- Processes
   property var processes: []
@@ -94,6 +100,7 @@ Item {
   property var netRxHistory: []
   property var netTxHistory: []
   property var gpuHistory: []
+  property var igpuHistory: []
   property var cpuTemperatureHistory: []
 
   signal sensorTick()
@@ -278,6 +285,21 @@ Item {
     gpuHistory = Model.pushHistory(gpuHistory, parsed.utilization, historyLength)
   }
 
+  function applyIgpuLine(line) {
+    var decoded = Model.readJsonObjects(igpuBuffer + line + "\n")
+    igpuBuffer = decoded.remainder
+    for (var i = 0; i < decoded.objects.length; i++) {
+      var object = decoded.objects[i]
+      if (object.detected) igpuDetected = true
+      if (object.error) igpuError = object.error
+      var sample = Model.parseIntelGpuSample(object)
+      if (!sample) continue
+      igpuPercent = sample.utilization
+      igpuError = ""
+      igpuHistory = Model.pushHistory(igpuHistory, igpuPercent, historyLength)
+    }
+  }
+
   // ---- Panel-only extras
   function applyFilesystems(text) {
     filesystems = Model.parseDf(text)
@@ -378,6 +400,26 @@ Item {
     // The helper exits immediately on a machine with no GPU it can read.
     // Without this it would be restarted on every panel open forever.
     onExited: if (root.gpu === null) root.gpuAvailable = false
+  }
+
+  Process {
+    id: igpuProcess
+    running: root.detailed && root.igpuAvailable
+    command: [root.scriptPath("omastats-igpu"), String(Math.max(250, root.gpuInterval))]
+    onStarted: {
+      root.igpuBuffer = ""
+      root.igpuPercent = NaN
+    }
+    stdout: SplitParser {
+      onRead: function(line) { root.applyIgpuLine(line) }
+    }
+    onExited: {
+      if (!root.detailed) return
+      root.igpuAvailable = false
+      root.igpuPercent = NaN
+      if (root.igpuDetected && !root.igpuError)
+        root.igpuError = "iGPU counters unavailable. Check intel_gpu_top access and permissions."
+    }
   }
 
   Process {

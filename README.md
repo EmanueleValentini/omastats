@@ -8,7 +8,8 @@ default. Clicking opens a panel with everything the plugin can measure:
 per-core load, clock and temperature, memory and swap, GPU load, VRAM and
 temperature, every hwmon sensor on the machine, filesystem usage and disk
 throughput, per-interface network rates, and the eight processes using the
-most CPU. CPU, memory, GPU and network each carry a rolling history strip of
+most CPU. Intel integrated graphics have their own load graph alongside the
+discrete GPU. CPU, memory, GPU, iGPU and network each carry a rolling history strip of
 the last ~90 samples.
 
 ## Requirements
@@ -18,6 +19,15 @@ the last ~90 samples.
 - Optional: `nvidia-smi` for NVIDIA GPUs. AMD cards are read from
   `/sys/class/drm/*/device` instead. Machines with neither simply have no
   graphics section.
+- Optional: `intel-gpu-tools` (`intel_gpu_top`) for the Intel iGPU graph.
+  The current user must be able to run `intel_gpu_top` and access its performance
+  counters. A detected iGPU shows an explanatory message if the tool is missing
+  or cannot read the counters; unavailable readings are never displayed as 0%.
+  Reload the plugin after installing the tool or changing its permissions.
+
+The Intel iGPU graph shows the busiest engine's utilization (render, video,
+copy, etc.), from 0–100%, with its own last 90 samples. It selects Intel's
+integrated PCI device at `00:02.0`, independently of the NVIDIA/AMD sampler.
 
 ## Install
 
@@ -85,13 +95,15 @@ restart.
 ## How it samples
 
 Readings come from `/proc` and `/sys` directly, inside the shell process —
-no subprocess per tick. Three things cannot be read that way and get a
+no subprocess per tick. Things that cannot be read that way get a
 helper:
 
 - `bin/omastats-sensors` runs once at startup to find the machine's hwmon
   temperature files, because QML cannot list a directory.
 - `bin/omastats-gpu` streams GPU samples, and runs only while a GPU reading
   is actually on screen.
+- `bin/omastats-igpu` streams Intel engine counters through `intel_gpu_top`,
+  only while the panel is open. It stops when the last open panel closes.
 - `df` and `ps` run only while the panel is open.
 
 The sampler is a `service` plugin, so a bar on each monitor shares one set of

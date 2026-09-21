@@ -339,6 +339,53 @@ function parseNvidiaLine(line) {
   }
 }
 
+// intel_gpu_top emits an open JSON array, flushed one object at a time.
+// Extract complete objects without waiting for the closing array bracket.
+function readJsonObjects(text) {
+  var objects = []
+  var start = -1
+  var depth = 0
+  var quoted = false
+  var escaped = false
+  for (var i = 0; i < text.length; i++) {
+    var ch = text[i]
+    if (start < 0) {
+      if (ch !== "{") continue
+      start = i
+    }
+    if (quoted) {
+      if (escaped) escaped = false
+      else if (ch === "\\") escaped = true
+      else if (ch === '"') quoted = false
+    } else if (ch === '"') quoted = true
+    else if (ch === "{") depth++
+    else if (ch === "}") {
+      depth--
+      if (depth === 0) {
+        try { objects.push(JSON.parse(text.slice(start, i + 1))) } catch (e) {}
+        start = -1
+      }
+    }
+  }
+  // Bound memory if a broken helper never finishes an object.
+  var remainder = start >= 0 ? text.slice(start) : ""
+  return { objects: objects, remainder: remainder.length <= 1048576 ? remainder : "" }
+}
+
+function parseIntelGpuSample(sample) {
+  if (!sample || !sample.engines) return null
+  // Engines run concurrently. Use the busiest engine, not their sum, so
+  // video decoding counts too and simultaneous work cannot exceed 100%.
+  var utilization = NaN
+  for (var name in sample.engines) {
+    var engine = sample.engines[name]
+    if (!engine || typeof engine.busy !== "number" || !isFinite(engine.busy)) continue
+    utilization = Math.max(isFinite(utilization) ? utilization : 0, clampPercent(engine.busy))
+  }
+  if (!isFinite(utilization)) return null
+  return { utilization: utilization }
+}
+
 // ---- helper output ----------------------------------------------------
 // `df -B1 --output=source,target,size,used,avail,pcent`, header dropped.
 // The four numeric columns are read from the right and the device from the
@@ -631,6 +678,8 @@ if (typeof module !== "undefined") {
     pickCpuTemperature: pickCpuTemperature,
     sortSensors: sortSensors,
     parseNvidiaLine: parseNvidiaLine,
+    readJsonObjects: readJsonObjects,
+    parseIntelGpuSample: parseIntelGpuSample,
     parseDf: parseDf,
     parseProcesses: parseProcesses,
     pushHistory: pushHistory,

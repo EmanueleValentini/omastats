@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Intel's integrated GPU lives at PCI device 00:02.0. Select its DRM node
+# explicitly so a discrete Intel card cannot be mistaken for the iGPU.
+# exec keeps the sampler's lifetime tied to the panel's Process.
+set -uo pipefail
+
+interval=${1:-2000}
+case "$interval" in
+  ''|*[!0-9]*) interval=2000 ;;
+esac
+[ "$interval" -lt 250 ] && interval=250
+
+for card in /sys/class/drm/card[0-9]*; do
+  [[ ${card##*/} =~ ^card[0-9]+$ ]] || continue
+  read -r vendor < "$card/device/vendor" 2>/dev/null || continue
+  [ "$vendor" = 0x8086 ] || continue
+  device=$(readlink -f "$card/device")
+  [[ ${device##*/} == ????:00:02.0 ]] || continue
+
+  printf '{"detected":true}\n'
+  if ! command -v intel_gpu_top >/dev/null 2>&1; then
+    printf '{"error":"Install intel-gpu-tools to read iGPU usage."}\n'
+    exit 0
+  fi
+
+  export LC_ALL=C
+  exec intel_gpu_top -J -s "$interval" -d "drm:/dev/dri/${card##*/}" -o -
+done

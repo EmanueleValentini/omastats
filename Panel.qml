@@ -428,6 +428,51 @@ Panel {
             foreground: root.contentForeground
           }
 
+          // ---- Integrated graphics, independent of the discrete GPU.
+          PanelSectionHeader {
+            visible: root.stats !== null && root.stats.igpuDetected
+            text: "INTEL iGPU"
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+          }
+
+          Meter {
+            visible: root.stats !== null && root.stats.igpuDetected
+            width: parent.width
+            label: "Load"
+            value: root.stats ? Model.formatPercent(root.stats.igpuPercent) : "—"
+            percent: root.stats && isFinite(root.stats.igpuPercent) ? root.stats.igpuPercent : 0
+            level: root.stats ? Model.loadLevel(root.stats.igpuPercent) : "normal"
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+          }
+
+          Sparkline {
+            visible: root.stats !== null && isFinite(root.stats.igpuPercent)
+            width: parent.width
+            height: Style.space(32)
+            values: root.stats ? root.stats.igpuHistory : []
+            capacity: root.stats ? root.stats.historyLength : 90
+            stroke: Style.selectedStateColor(root.contentForeground, Color.accent)
+            maxValue: 100
+          }
+
+          Text {
+            visible: root.stats !== null && root.stats.igpuDetected
+            width: parent.width
+            text: root.stats && root.stats.igpuError ? root.stats.igpuError : "Busiest engine · render, video or copy"
+            color: root.fainterForeground
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
+          PanelSeparator {
+            visible: root.stats !== null && root.stats.igpuDetected
+            width: parent.width
+            foreground: root.contentForeground
+          }
+
           // ---- Temperatures. Every sensor the machine exposes, grouped by
           //      chip, so a hot NVMe or a hot chipset is findable here
           //      rather than only in the CPU's own number.
