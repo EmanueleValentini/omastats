@@ -383,7 +383,23 @@ function parseIntelGpuSample(sample) {
     utilization = Math.max(isFinite(utilization) ? utilization : 0, clampPercent(engine.busy))
   }
   if (!isFinite(utilization)) return null
-  return { utilization: utilization }
+
+  // intel_gpu_top also reports watts, and reports them to an unprivileged
+  // process — which RAPL's own energy_uj has not done since it was closed
+  // off as a side channel. "GPU" is the graphics slice alone; "Package" is
+  // the whole socket, so it carries the CPU cores, the uncore and the iGPU
+  // together and is never just the CPU.
+  var power = sample.power || {}
+  return {
+    utilization: utilization,
+    watts: positiveNumber(power.GPU),
+    packageWatts: positiveNumber(power.Package)
+  }
+}
+
+function positiveNumber(value) {
+  var number = Number(value)
+  return isFinite(number) && number >= 0 ? number : NaN
 }
 
 // ---- helper output ----------------------------------------------------
@@ -537,9 +553,29 @@ function formatRate(bytesPerSecond) {
   return formatBytes(bytesPerSecond) + "/s"
 }
 
+// A meter track needs a 0-100 fill, and watts have no ceiling to scale
+// against the way a percentage does. Fill against the tallest sample in the
+// window instead, with a floor so an idle part does not draw its own noise
+// floor as a full bar.
+function wattsPercent(value, history, floor) {
+  if (!isFinite(value) || value <= 0) return 0
+  var peak = historyMax(history, floor > 0 ? floor : 1)
+  if (value > peak) peak = value
+  return clampPercent((value / peak) * 100)
+}
+
 function formatTemperature(celsius) {
   if (!isFinite(celsius)) return "—"
   return Math.round(celsius) + "°"
+}
+
+// Watts read at very different magnitudes across the three parts — an idle
+// iGPU sits under a watt, a package under load runs to three figures — so
+// the small end keeps a decimal the large end would only make noisy.
+function formatWatts(value) {
+  if (!isFinite(value)) return "—"
+  if (value < 10) return value.toFixed(1) + " W"
+  return Math.round(value) + " W"
 }
 
 function formatMhz(mhz) {
@@ -577,7 +613,11 @@ function diskLevel(percent) { return level(percent, 85, 95) }
 // ---- bar label --------------------------------------------------------
 // The bar shows a chosen subset; the panel always shows everything. Keys
 // here are what shell.json stores in the widget entry's `metrics` array.
-var METRIC_KEYS = ["cpu", "cpuTemp", "mem", "swap", "gpu", "gpuTemp", "net", "disk"]
+// CPU and iGPU watts are deliberately absent: their only source is the
+// intel_gpu_top helper, which runs while the panel is open and nowhere
+// else, so a bar segment for them would be blank most of the time. The
+// discrete GPU has a helper the bar can keep running on its own.
+var METRIC_KEYS = ["cpu", "cpuTemp", "mem", "swap", "gpu", "gpuTemp", "gpuWatt", "net", "disk"]
 
 // Material Design glyphs from the Nerd Font the bar already uses.
 var METRIC_ICONS = {
@@ -587,13 +627,14 @@ var METRIC_ICONS = {
   swap: "\u{F04E6}",
   gpu: "\u{F0379}",
   gpuTemp: "\u{F050F}",
+  gpuWatt: "\u{F0241}",
   net: "\u{F0318}",
   disk: "\u{F02CA}"
 }
 
 function metricNeedsGpu(metrics) {
   var list = metrics || []
-  return list.indexOf("gpu") >= 0 || list.indexOf("gpuTemp") >= 0
+  return list.indexOf("gpu") >= 0 || list.indexOf("gpuTemp") >= 0 || list.indexOf("gpuWatt") >= 0
 }
 
 function normalizeMetrics(value, fallback) {
@@ -646,6 +687,8 @@ function barSegments(metrics, snapshot, showIcons) {
       if (gpu && isFinite(gpu.utilization)) push(key, formatPercent(gpu.utilization), loadLevel(gpu.utilization))
     } else if (key === "gpuTemp") {
       if (gpu && isFinite(gpu.temperature)) push(key, formatTemperature(gpu.temperature), temperatureLevel(gpu.temperature))
+    } else if (key === "gpuWatt") {
+      if (gpu && isFinite(gpu.power)) push(key, formatWatts(gpu.power), "normal")
     } else if (key === "net") {
       push(key, "\u2193" + formatBytes(data.netRx) + " \u2191" + formatBytes(data.netTx), "normal")
     } else if (key === "disk") {
@@ -690,6 +733,8 @@ if (typeof module !== "undefined") {
     formatBytesLong: formatBytesLong,
     formatRate: formatRate,
     formatTemperature: formatTemperature,
+    formatWatts: formatWatts,
+    wattsPercent: wattsPercent,
     formatMhz: formatMhz,
     formatUptime: formatUptime,
     level: level,

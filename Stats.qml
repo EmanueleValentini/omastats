@@ -13,7 +13,7 @@ import "Model.js" as Model
 //
 //   bin/omastats-sensors  one shot at startup, to find the hwmon files
 //   bin/omastats-gpu      long-lived, only while a GPU number is on screen
-//   bin/omastats-igpu     Intel iGPU, only while the panel is open
+//   bin/omastats-igpu     Intel iGPU and package watts, panel only
 //   df / ps               only while the panel is open
 //
 // Consumers announce what they need with retain()/release() so a closed
@@ -64,6 +64,11 @@ Item {
   property var loadAverage: ({ one: 0, five: 0, fifteen: 0, running: "" })
   property real uptimeSeconds: 0
 
+  // Socket power, from the iGPU helper — so it exists only while the panel
+  // is open, and only on an Intel machine with intel-gpu-tools. It covers
+  // the whole package, iGPU included, which is why it is not called "CPU".
+  property real packageWatts: NaN
+
   // ---- Memory
   property var memory: ({ total: 0, used: 0, available: 0, cached: 0, percent: 0, swapTotal: 0, swapUsed: 0, swapPercent: 0 })
 
@@ -88,6 +93,7 @@ Item {
   property bool igpuDetected: false
   property bool igpuAvailable: true
   property real igpuPercent: NaN
+  property real igpuWatts: NaN
   property string igpuError: ""
   property string igpuBuffer: ""
 
@@ -100,7 +106,10 @@ Item {
   property var netRxHistory: []
   property var netTxHistory: []
   property var gpuHistory: []
+  property var gpuWattsHistory: []
   property var igpuHistory: []
+  property var igpuWattsHistory: []
+  property var packageWattsHistory: []
   property var cpuTemperatureHistory: []
 
   signal sensorTick()
@@ -283,6 +292,7 @@ Item {
     if (!parsed) return
     gpu = parsed
     gpuHistory = Model.pushHistory(gpuHistory, parsed.utilization, historyLength)
+    if (isFinite(parsed.power)) gpuWattsHistory = Model.pushHistory(gpuWattsHistory, parsed.power, historyLength)
   }
 
   function applyIgpuLine(line) {
@@ -297,6 +307,14 @@ Item {
       igpuPercent = sample.utilization
       igpuError = ""
       igpuHistory = Model.pushHistory(igpuHistory, igpuPercent, historyLength)
+
+      // A machine whose firmware does not report power leaves these NaN
+      // for the whole session; the panel drops their rows rather than
+      // showing a permanent dash.
+      igpuWatts = sample.watts
+      if (isFinite(igpuWatts)) igpuWattsHistory = Model.pushHistory(igpuWattsHistory, igpuWatts, historyLength)
+      packageWatts = sample.packageWatts
+      if (isFinite(packageWatts)) packageWattsHistory = Model.pushHistory(packageWattsHistory, packageWatts, historyLength)
     }
   }
 
@@ -409,6 +427,8 @@ Item {
     onStarted: {
       root.igpuBuffer = ""
       root.igpuPercent = NaN
+      root.igpuWatts = NaN
+      root.packageWatts = NaN
     }
     stdout: SplitParser {
       onRead: function(line) { root.applyIgpuLine(line) }
@@ -417,6 +437,8 @@ Item {
       if (!root.detailed) return
       root.igpuAvailable = false
       root.igpuPercent = NaN
+      root.igpuWatts = NaN
+      root.packageWatts = NaN
       if (root.igpuDetected && !root.igpuError)
         root.igpuError = "iGPU counters unavailable. Check intel_gpu_top access and permissions."
     }

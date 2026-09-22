@@ -133,6 +133,27 @@ eq("intel: empty engines is not idle", M.parseIntelGpuSample({ engines: {} }), n
 eq("intel: invalid values are not idle", M.parseIntelGpuSample({ engines: { Render: { busy: null }, Video: { busy: "N/A" }, Copy: { busy: NaN } } }), null)
 eq("intel: null engine ignored", M.parseIntelGpuSample({ engines: { Render: null } }), null)
 
+// ---- Watts. intel_gpu_top reports the graphics slice and the whole socket
+// separately; both ride along with the utilization sample.
+const intelPowered = { engines: { Render: { busy: 10 } }, power: { GPU: 7.382133, Package: 45.491881, unit: "W" } }
+near("intel: igpu watts", M.parseIntelGpuSample(intelPowered).watts, 7.382133)
+near("intel: package watts", M.parseIntelGpuSample(intelPowered).packageWatts, 45.491881)
+check("intel: firmware without power reports NaN", !isFinite(M.parseIntelGpuSample(intelSample).watts))
+check("intel: a negative reading is not a watt", !isFinite(M.parseIntelGpuSample({ engines: { Render: { busy: 1 } }, power: { GPU: -1 } }).watts))
+eq("intel: idle iGPU reports zero, not absent", M.parseIntelGpuSample({ engines: { Render: { busy: 0 } }, power: { GPU: 0 } }).watts, 0)
+
+eq("watts: the small end keeps a decimal", M.formatWatts(7.382133), "7.4 W")
+eq("watts: the large end does not", M.formatWatts(45.491881), "45 W")
+eq("watts: zero is a reading", M.formatWatts(0), "0.0 W")
+eq("watts: nothing to report", M.formatWatts(NaN), "\u2014")
+
+// The track scales against the window's own peak, so a part that has never
+// drawn more than a few watts still fills its meter.
+eq("watts: fills against the window peak", M.wattsPercent(5, [1, 2, 5], 1), 100)
+eq("watts: a floor keeps idle noise small", M.wattsPercent(1, [0.5, 1], 20), 5)
+eq("watts: a fresh sample above the peak still fits", M.wattsPercent(60, [10, 20], 15), 100)
+eq("watts: nothing to draw", M.wattsPercent(NaN, [1, 2], 1), 0)
+
 const intelStream = '[\n' + JSON.stringify(intelSample, null, 2) + ',\n' + JSON.stringify({ engines: { Render: { busy: 0 } }, client: 'name {with} "quotes" and \\ escapes' })
 let jsonBuffer = ""
 const intelObjects = []
@@ -155,8 +176,10 @@ eq("intel: missing-tool message parsed", M.readJsonObjects('{"error":"Install in
 // A hybrid machine must keep its discrete and integrated histories separate.
 const statsSource = readFileSync(new URL("../Stats.qml", import.meta.url), "utf8")
 const stats = {
-  Model: M, gpu: null, gpuHistory: [], igpuDetected: false,
-  igpuPercent: NaN, igpuHistory: [], igpuError: "", igpuBuffer: "", historyLength: 2
+  Model: M, gpu: null, gpuHistory: [], gpuWattsHistory: [], igpuDetected: false,
+  igpuPercent: NaN, igpuHistory: [], igpuWatts: NaN, igpuWattsHistory: [],
+  packageWatts: NaN, packageWattsHistory: [],
+  igpuError: "", igpuBuffer: "", historyLength: 2
 }
 const gpuMethods = ["applyGpuLine", "applyIgpuLine"].map(name => {
   const method = statsSource.match(new RegExp("  function " + name + "\\([^]*?\\n  \\}"))
@@ -167,15 +190,29 @@ runInNewContext(gpuMethods, stats)
 stats.applyGpuLine("NVIDIA GPU, 80, 45, 512, 8188, 23, 210, 30")
 stats.applyIgpuLine('{"detected":true}')
 for (const busy of [10, 25, 40]) {
-  for (const line of JSON.stringify({ engines: { Video: { busy } } }, null, 2).split("\n")) stats.applyIgpuLine(line)
+  const sample = { engines: { Video: { busy } }, power: { GPU: busy / 10, Package: busy } }
+  for (const line of JSON.stringify(sample, null, 2).split("\n")) stats.applyIgpuLine(line)
 }
 eq("sampler: iGPU detected", stats.igpuDetected, true)
 eq("sampler: iGPU current load", stats.igpuPercent, 40)
 eq("sampler: bounded iGPU history", stats.igpuHistory.join(","), "25,40")
 eq("sampler: discrete GPU load preserved", stats.gpu.utilization, 80)
 eq("sampler: discrete GPU history preserved", stats.gpuHistory.join(","), "80")
+eq("sampler: discrete GPU watts", stats.gpuWattsHistory.join(","), "23")
+eq("sampler: iGPU watts", stats.igpuWatts, 4)
+eq("sampler: bounded iGPU watt history", stats.igpuWattsHistory.join(","), "2.5,4")
+eq("sampler: package watts", stats.packageWatts, 40)
+eq("sampler: bounded package watt history", stats.packageWattsHistory.join(","), "25,40")
 stats.applyIgpuLine('{"engines":{}}')
 eq("sampler: missing reading does not append zero", stats.igpuHistory.join(","), "25,40")
+eq("sampler: missing reading does not append zero watts", stats.packageWattsHistory.join(","), "25,40")
+
+// A machine whose firmware reports no power at all keeps its load history
+// and leaves the watt rows empty, rather than drawing a flat zero.
+for (const line of JSON.stringify({ engines: { Video: { busy: 50 } } }, null, 2).split("\n")) stats.applyIgpuLine(line)
+eq("sampler: load survives without power", stats.igpuPercent, 50)
+check("sampler: no power reported, no watts", !isFinite(stats.packageWatts) && !isFinite(stats.igpuWatts))
+eq("sampler: no watts appended", stats.packageWattsHistory.join(","), "25,40")
 stats.applyIgpuLine('{"error":"Install intel-gpu-tools"}')
 eq("sampler: actionable helper error", stats.igpuError, "Install intel-gpu-tools")
 
@@ -252,6 +289,9 @@ eq("bar: icon prefixes the label", segments[0].label, M.METRIC_ICONS.cpu + " 42%
 eq("bar: icons can be dropped", M.barSegments(["cpu"], snapshot, false)[0].label, "42%")
 eq("bar: net arrows", segments[4].text, "\u21931.5K \u2191512B")
 eq("bar: gpu absent means no segment", M.barSegments(["gpu"], { gpu: null }).length, 0)
+eq("bar: gpu watts", M.barSegments(["gpuWatt"], { gpu: { power: 123.4 } })[0].text, "123 W")
+eq("bar: a gpu that does not report watts gets no segment", M.barSegments(["gpuWatt"], { gpu: { power: NaN } }).length, 0)
+check("bar: gpu watts ask for the helper", M.metricNeedsGpu(["gpuWatt"]))
 eq("bar: order follows config", M.barSegments(["net", "cpu"], snapshot).map(s => s.key).join(","), "net,cpu")
 check("bar: gpu metrics ask for the helper", M.metricNeedsGpu(["cpu", "gpuTemp"]))
 check("bar: no gpu metric, no helper", !M.metricNeedsGpu(["cpu", "mem", "net"]))

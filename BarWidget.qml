@@ -119,7 +119,7 @@ BarWidget {
     ["cpu", "mem", "net"],
     ["cpu", "cpuTemp", "mem"],
     ["cpu", "cpuTemp", "mem", "gpu", "gpuTemp"],
-    ["cpu", "cpuTemp", "mem", "swap", "gpu", "gpuTemp", "net", "disk"],
+    ["cpu", "cpuTemp", "mem", "swap", "gpu", "gpuTemp", "gpuWatt", "net", "disk"],
     ["cpu"]
   ]
 

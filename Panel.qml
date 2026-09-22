@@ -255,6 +255,42 @@ Panel {
             fontFamily: root.contentFontFamily
           }
 
+          // Package power. The number is the whole socket — cores, uncore
+          // and the integrated graphics — so it is labelled as such rather
+          // than passed off as the CPU's own draw. Present only while the
+          // iGPU helper is feeding it.
+          Meter {
+            visible: root.stats !== null && isFinite(root.stats.packageWatts)
+            width: parent.width
+            label: "Package power"
+            value: root.stats ? Model.formatWatts(root.stats.packageWatts) : "—"
+            percent: root.stats ? Model.wattsPercent(root.stats.packageWatts, root.stats.packageWattsHistory, 15) : 0
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+          }
+
+          Sparkline {
+            visible: root.stats !== null && isFinite(root.stats.packageWatts)
+            width: parent.width
+            height: Style.space(32)
+            values: root.stats ? root.stats.packageWattsHistory : []
+            capacity: root.stats ? root.stats.historyLength : 90
+            stroke: Style.selectedStateColor(root.contentForeground, Color.accent)
+            // No ceiling to scale watts against: the strip scales itself.
+            maxValue: 0
+            minimumScale: 15
+          }
+
+          Text {
+            visible: root.stats !== null && isFinite(root.stats.packageWatts)
+            width: parent.width
+            text: "whole socket · cores, uncore and integrated graphics"
+            color: root.fainterForeground
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
           // Per-core load, two columns. A single busy core on an otherwise
           // idle machine is the difference between "it is compiling" and
           // "something is wrong", and the aggregate number hides it.
@@ -407,6 +443,27 @@ Panel {
             fontFamily: root.contentFontFamily
           }
 
+          Meter {
+            visible: root.hasGpu && isFinite(root.gpu.power)
+            width: parent.width
+            label: "Power"
+            value: root.hasGpu ? Model.formatWatts(root.gpu.power) : "—"
+            percent: root.stats && root.hasGpu ? Model.wattsPercent(root.gpu.power, root.stats.gpuWattsHistory, 30) : 0
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+          }
+
+          Sparkline {
+            visible: root.hasGpu && isFinite(root.gpu.power)
+            width: parent.width
+            height: Style.space(32)
+            values: root.stats ? root.stats.gpuWattsHistory : []
+            capacity: root.stats ? root.stats.historyLength : 90
+            stroke: Style.selectedStateColor(root.contentForeground, Color.accent)
+            maxValue: 0
+            minimumScale: 30
+          }
+
           Text {
             visible: root.hasGpu
             width: parent.width
@@ -414,7 +471,6 @@ Panel {
               if (!root.hasGpu) return ""
               var parts = []
               if (isFinite(root.gpu.clockMhz)) parts.push("clock " + Model.formatMhz(root.gpu.clockMhz))
-              if (isFinite(root.gpu.power)) parts.push("power " + root.gpu.power.toFixed(0) + " W")
               if (isFinite(root.gpu.fanPercent)) parts.push("fan " + Model.formatPercent(root.gpu.fanPercent))
               return parts.join("   ·   ")
             }
@@ -455,6 +511,27 @@ Panel {
             capacity: root.stats ? root.stats.historyLength : 90
             stroke: Style.selectedStateColor(root.contentForeground, Color.accent)
             maxValue: 100
+          }
+
+          Meter {
+            visible: root.stats !== null && isFinite(root.stats.igpuWatts)
+            width: parent.width
+            label: "Power"
+            value: root.stats ? Model.formatWatts(root.stats.igpuWatts) : "—"
+            percent: root.stats ? Model.wattsPercent(root.stats.igpuWatts, root.stats.igpuWattsHistory, 5) : 0
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+          }
+
+          Sparkline {
+            visible: root.stats !== null && isFinite(root.stats.igpuWatts)
+            width: parent.width
+            height: Style.space(32)
+            values: root.stats ? root.stats.igpuWattsHistory : []
+            capacity: root.stats ? root.stats.historyLength : 90
+            stroke: Style.selectedStateColor(root.contentForeground, Color.accent)
+            maxValue: 0
+            minimumScale: 5
           }
 
           Text {
