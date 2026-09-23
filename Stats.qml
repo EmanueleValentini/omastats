@@ -296,7 +296,13 @@ Item {
   }
 
   function applyIgpuLine(line) {
-    var decoded = Model.readJsonObjects(igpuBuffer + line + "\n")
+    // intel_gpu_top indents everything nested inside a sample, so only an
+    // unindented line can close one. Rescanning the buffer on every line
+    // made each sample cost O(lines²) — ~50ms of GUI thread per sample.
+    igpuBuffer += line + "\n"
+    // The length check keeps readJsonObjects' memory bound in force.
+    if (/^\s/.test(line) && igpuBuffer.length < 1048576) return
+    var decoded = Model.readJsonObjects(igpuBuffer)
     igpuBuffer = decoded.remainder
     for (var i = 0; i < decoded.objects.length; i++) {
       var object = decoded.objects[i]
@@ -420,9 +426,22 @@ Item {
     onExited: if (root.gpu === null) root.gpuAvailable = false
   }
 
+  // intel_gpu_top stalls the compositor-side GPU for a few hundred ms while
+  // it opens the i915 counters. Started together with the panel, that stall
+  // freezes the panel's fade-in half-transparent; started once the fade has
+  // finished, it lands on an already opaque panel and goes unnoticed.
+  property bool igpuStartReady: false
+  onDetailedChanged: if (!detailed) igpuStartReady = false
+
+  Timer {
+    interval: 200
+    running: root.detailed && !root.igpuStartReady
+    onTriggered: root.igpuStartReady = true
+  }
+
   Process {
     id: igpuProcess
-    running: root.detailed && root.igpuAvailable
+    running: root.detailed && root.igpuStartReady && root.igpuAvailable
     command: [root.scriptPath("omastats-igpu"), String(Math.max(250, root.gpuInterval))]
     onStarted: {
       root.igpuBuffer = ""
