@@ -14,18 +14,46 @@ own watts, the discrete card's, and the integrated graphics'. CPU, memory,
 GPU, iGPU and network each carry a rolling history strip of the last ~90
 samples.
 
+<p align="center">
+  <img src="assets/bar.png" alt="Omastats in the bar: CPU, temperature and memory">
+</p>
+
+<p align="center">
+  <img src="preview.png" alt="The Omastats panel" width="420">
+</p>
+
 ## Requirements
 
-- Omarchy 4.x (`omarchy-shell`)
-- `df` and `ps` (coreutils / procps, already present on any Omarchy install)
-- Optional: `nvidia-smi` for NVIDIA GPUs. AMD cards are read from
-  `/sys/class/drm/*/device` instead. Machines with neither simply have no
-  graphics section.
-- Optional: `intel-gpu-tools` (`intel_gpu_top`) for the Intel iGPU graph.
-  The current user must be able to run `intel_gpu_top` and access its performance
-  counters. A detected iGPU shows an explanatory message if the tool is missing
-  or cannot read the counters; unavailable readings are never displayed as 0%.
-  Reload the plugin after installing the tool or changing its permissions.
+Works on any Omarchy 4.x machine with no extra packages: CPU, memory,
+temperatures, disks, network and processes come from `/proc`, `/sys`, `df`
+and `ps`, all present on a stock install.
+
+Optional, each enabling one more section:
+
+| Dependency | Enables | Notes |
+|---|---|---|
+| `nvidia-smi` (NVIDIA driver) | NVIDIA GPU load, VRAM, temperature, power | First card only on multi-GPU machines |
+| amdgpu kernel driver | AMD GPU load, VRAM, temperature, power | Read from sysfs, no package needed; the discrete card wins over an APU |
+| `intel-gpu-tools` package | Intel iGPU graph, iGPU and package watts | See below for counter access |
+
+Machines with none of these simply have no graphics section. Nothing is
+downloaded or installed by the plugin itself.
+
+### Intel iGPU access
+
+`intel_gpu_top` reads the i915 performance counters, which an unprivileged
+user cannot open while `kernel.perf_event_paranoid` is at its default of `2`.
+Either lower that sysctl, or give the binary the `cap_perfmon` capability as
+root (`setcap cap_perfmon=ep /usr/bin/intel_gpu_top`) — the latter lets any
+local user read GPU performance counters, so decide whether that is
+acceptable on your machine. Until then a detected iGPU shows an explanatory
+message instead of a graph; unavailable readings are never displayed as 0%.
+Restart the shell (`omarchy-restart-shell`) after installing the tool or
+changing its permissions.
+
+Intel's newer `xe` kernel driver (Lunar Lake and later) is only partly
+supported by `intel_gpu_top`; on those machines the iGPU section may stay
+empty.
 
 The Intel iGPU graph shows the busiest engine's utilization (render, video,
 copy, etc.), from 0–100%, with its own last 90 samples. It selects Intel's
@@ -55,13 +83,10 @@ absent — never a flat zero.
 
 The same goes for the discrete card, where the driver decides what is
 readable. NVIDIA's **open** kernel modules (`nvidia-open-dkms`) are known to
-report power as `N/A` or `ERR!` on cards where the proprietary driver
-reports it fine — on this machine an RTX 4060 answers `[N/A]` to
-`power.draw`, `power.draw.instant` and `power.draw.average` alike, and
-`power.management` answers "deprecated", while still reporting its static
-115 W *limit*. A limit is a setting, not a measurement, so the GPU power row
-is dropped rather than filled with it. Switching to the proprietary
-`nvidia-dkms` is the usual fix if you want the reading.
+report power as `N/A` on some cards — notably laptop GPUs — where the
+proprietary driver reports it fine, while still reporting the card's static
+power *limit*. A limit is a setting, not a measurement, so the GPU power row
+is dropped rather than filled with it.
 
 Watts have no fixed ceiling the way a percentage does, so each meter and
 strip scales against the tallest sample in its own window.
@@ -72,17 +97,15 @@ strip scales against the tallest sample in its own window.
 omarchy plugin add https://github.com/EmanueleValentini/omastats --enable
 ```
 
-Or manually:
+This clones the repository into
+`~/.config/omarchy/plugins/io.github.emanuelevalentini.omastats` and adds the
+widget to the right of the bar. To place it elsewhere:
 
 ```bash
-git clone https://github.com/EmanueleValentini/omastats \
-  ~/.config/omarchy/plugins/io.github.emanuelevalentini.omastats
-omarchy plugin enable io.github.emanuelevalentini.omastats right
-omarchy-restart-shell
+omarchy plugin enable io.github.emanuelevalentini.omastats --section left
 ```
 
-The second argument to `enable` is the bar section (`left`, `center`,
-`right`).
+Update with `omarchy plugin update io.github.emanuelevalentini.omastats`.
 
 ## Usage
 
@@ -154,9 +177,9 @@ label.
 ## Development
 
 ```bash
-node tests/model.test.mjs   # parsers and formatters, against fixtures and live /proc
-./dev-install.sh            # copy into the plugin dir, validate, restart the shell
-./dev-install.sh --no-restart
+node tests/model.test.mjs       # parsers and formatters, against fixtures and live /proc
+scripts/dev-sync.sh             # copy into the plugin dir, validate, restart the shell
+scripts/dev-sync.sh --no-restart
 ```
 
 Omarchy refuses to load a plugin folder containing symlinks, so the working
@@ -171,6 +194,12 @@ suite possible without a running compositor.
 ```bash
 omarchy plugin remove io.github.emanuelevalentini.omastats
 ```
+
+This unloads the plugin from the running shell and deletes its folder. The
+plugin never writes anywhere except its own widget entry in
+`~/.config/omarchy/shell.json` (the metric preset chosen by right-click).
+If you granted `intel_gpu_top` the `cap_perfmon` capability for this
+plugin, drop it as root with `setcap -r /usr/bin/intel_gpu_top`.
 
 ## License
 

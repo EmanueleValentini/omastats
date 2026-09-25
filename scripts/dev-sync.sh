@@ -3,12 +3,14 @@
 # shell. Omarchy refuses to load a plugin folder containing symlinks, so
 # development is a copy rather than a link.
 #
-#   ./dev-install.sh            copy, validate, restart the shell
-#   ./dev-install.sh --no-restart   copy and validate only
+#   scripts/dev-sync.sh               copy, validate, restart the shell
+#   scripts/dev-sync.sh --no-restart  copy and validate only
 
 set -euo pipefail
 
-plugin_id=$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' manifest.json | head -1)
+cd "$(dirname "$0")/.."
+
+plugin_id=$(jq -r '.id // empty' manifest.json)
 [ -n "$plugin_id" ] || { echo "could not read plugin id from manifest.json" >&2; exit 1; }
 
 target="$HOME/.config/omarchy/plugins/$plugin_id"
@@ -16,13 +18,16 @@ mkdir -p "$target"
 
 rsync -a --delete \
   --exclude '.git' \
+  --exclude '.gitignore' \
+  --exclude 'scripts' \
   --exclude 'tests' \
-  --exclude 'dev-install.sh' \
+  --exclude 'preview.*' \
+  --exclude 'assets' \
   --exclude '*.md' \
   ./ "$target/"
 
 omarchy plugin validate "$target"
-echo "installed to $target"
+echo "synced to $target"
 
 if [ "${1:-}" != "--no-restart" ]; then
   omarchy-restart-shell

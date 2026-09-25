@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.emanuelevalentini.omastats",
   "name": "Omastats",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Emanuele Valentini",
   "license": "MIT",
   "description": "Live CPU, memory, temperature, GPU, disk and network stats in the bar, with a full system panel on click",

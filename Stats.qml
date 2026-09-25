@@ -23,8 +23,10 @@ Item {
   id: root
   visible: false
 
-  // The plugin is installed as a folder; scripts sit next to the QML.
-  readonly property string pluginDir: String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "").replace(/\/$/, "")
+  // The plugin is installed as a folder; scripts sit next to the QML. The
+  // URL is percent-encoded, so a home directory with a space in it would
+  // otherwise hand Process a path that does not exist.
+  readonly property string pluginDir: decodeURIComponent(String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "").replace(/\/$/, ""))
 
   property int interval: 1000
   property int sensorInterval: 2000
