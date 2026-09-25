@@ -19,7 +19,7 @@ samples.
 </p>
 
 <p align="center">
-  <img src="preview.png" alt="The Omastats panel" width="420">
+  <img src="assets/panel.png" alt="The Omastats panel" width="420">
 </p>
 
 ## Requirements
